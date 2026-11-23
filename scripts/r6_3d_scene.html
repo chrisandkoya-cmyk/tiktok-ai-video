@@ -1,0 +1,814 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8" />
+  <title>Roblox R6 3D Horror Renderer</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #020305;
+      font-family: "Loma", sans-serif;
+    }
+    #stage {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+    }
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+    /* กล่องแชทสไตล์ Classic Roblox (ใช้ในฉาก 4 และ 6) */
+    #roblox-chat {
+      position: absolute;
+      top: 7%;
+      left: 5%;
+      width: 72%;
+      background: rgba(12, 14, 18, 0.72);
+      border: 2px solid rgba(255, 255, 255, 0.14);
+      border-radius: 10px;
+      padding: 14px 16px;
+      color: #f0f0f0;
+      font-size: 22px;
+      line-height: 1.45;
+      display: none;
+      box-shadow: 0 8px 28px rgba(0, 0, 0, 0.7);
+    }
+    .chat-line { margin-bottom: 6px; }
+    .chat-user { color: #58b4ff; font-weight: bold; }
+    .chat-entity { color: #ff3b3b; font-weight: bold; }
+    .chat-danger { color: #ff4a4a; font-weight: bold; text-shadow: 0 0 10px rgba(255, 40, 40, 0.7); }
+
+    /* เมนู Leave เกมที่กดไม่ได้ (ใช้ในฉาก 5) */
+    #leave-modal {
+      position: absolute;
+      top: 10%;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 76%;
+      background: rgba(20, 22, 28, 0.88);
+      border: 2px solid rgba(255, 255, 255, 0.16);
+      border-radius: 14px;
+      padding: 20px;
+      text-align: center;
+      color: #ffffff;
+      display: none;
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.85);
+    }
+    #leave-modal .title {
+      font-size: 24px;
+      font-weight: bold;
+      margin-bottom: 14px;
+      letter-spacing: 0.5px;
+    }
+    #leave-btn {
+      display: inline-block;
+      width: 85%;
+      padding: 12px 0;
+      border-radius: 8px;
+      background: #c92a2a;
+      color: #fff;
+      font-size: 24px;
+      font-weight: bold;
+      border: 2px solid #ff6b6b;
+    }
+    #leave-err {
+      margin-top: 10px;
+      font-size: 18px;
+      color: #ff6b6b;
+      min-height: 24px;
+    }
+    /* แถบข้อมูลเซิร์ฟเวอร์มุมบนขวา */
+    #server-badge {
+      position: absolute;
+      top: 2.5%;
+      right: 4%;
+      background: rgba(10, 12, 16, 0.68);
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      border-radius: 8px;
+      padding: 6px 12px;
+      color: #d8e2ee;
+      font-size: 16px;
+      letter-spacing: 0.4px;
+      display: none;
+    }
+    #server-badge .dot {
+      display: inline-block;
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: #ff3b3b;
+      margin-right: 7px;
+      box-shadow: 0 0 8px #ff3b3b;
+    }
+    /* เอฟเฟกต์จอดับ/กะพริบ */
+    #blackout {
+      position: absolute;
+      inset: 0;
+      background: #000000;
+      opacity: 0;
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+  <div id="stage">
+    <div id="server-badge"><span class="dot"></span>PLAYERS: 1/12 &nbsp;|&nbsp; 03:00 AM</div>
+    <div id="roblox-chat"></div>
+    <div id="leave-modal">
+      <div class="title">LEAVE EXPERIENCE?</div>
+      <div id="leave-btn">LEAVE GAME</div>
+      <div id="leave-err"></div>
+    </div>
+    <div id="blackout"></div>
+  </div>
+
+  <script src="vendor/three.min.js"></script>
+  <script>
+    // =========================================================================
+    // เครื่องยนต์เรนเดอร์แอนิเมชัน 3D Roblox R6 สไตล์สยองขวัญ (Three.js)
+    // รองรับการสั่งเรนเดอร์ทีละเฟรมตามเวลาแม่นยำผ่าน window.renderAt(t)
+    // =========================================================================
+
+    const stageEl = document.getElementById("stage");
+    const chatEl = document.getElementById("roblox-chat");
+    const leaveEl = document.getElementById("leave-modal");
+    const leaveBtnEl = document.getElementById("leave-btn");
+    const leaveErrEl = document.getElementById("leave-err");
+    const badgeEl = document.getElementById("server-badge");
+    const blackoutEl = document.getElementById("blackout");
+
+    const renderer = new THREE.WebGLRenderer({ antialias: false, preserveDrawingBuffer: true });
+    renderer.setPixelRatio(1);
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.shadowMap.enabled = false;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.08;
+    stageEl.insertBefore(renderer.domElement, stageEl.firstChild);
+
+    // -------------------------------------------------------------------------
+    // สร้าง Texture สไตล์ Classic Roblox (Stud, ถนน, อิฐ, หน้าตัวละคร R6)
+    // -------------------------------------------------------------------------
+    function makeStudTexture(baseHex, studHex) {
+      const c = document.createElement("canvas");
+      c.width = 128; c.height = 128;
+      const ctx = c.getContext("2d");
+      ctx.fillStyle = baseHex;
+      ctx.fillRect(0, 0, 128, 128);
+      for (let y = 16; y < 128; y += 32) {
+        for (let x = 16; x < 128; x += 32) {
+          ctx.fillStyle = "rgba(0,0,0,0.22)";
+          ctx.beginPath(); ctx.arc(x + 2, y + 2, 9, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = studHex;
+          ctx.beginPath(); ctx.arc(x, y, 8.5, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = "rgba(255,255,255,0.18)";
+          ctx.beginPath(); ctx.arc(x - 2, y - 2, 3, 0, Math.PI * 2); ctx.fill();
+        }
+      }
+      const tex = new THREE.CanvasTexture(c);
+      tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+      return tex;
+    }
+
+    function makeRoadTexture() {
+      const c = document.createElement("canvas");
+      c.width = 256; c.height = 256;
+      const ctx = c.getContext("2d");
+      ctx.fillStyle = "#14161a";
+      ctx.fillRect(0, 0, 256, 256);
+      // เพิ่มลายพื้นถนนขรุขระ
+      for (let i = 0; i < 1600; i++) {
+        const x = (i * 73) % 256;
+        const y = (i * 137) % 256;
+        ctx.fillStyle = i % 2 === 0 ? "rgba(255,255,255,0.035)" : "rgba(0,0,0,0.25)";
+        ctx.fillRect(x, y, 3, 3);
+      }
+      // เส้นประสีขาวตรงกลางถนน
+      ctx.fillStyle = "#6e737b";
+      ctx.fillRect(122, 18, 12, 95);
+      ctx.fillRect(122, 150, 12, 95);
+      const tex = new THREE.CanvasTexture(c);
+      tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+      tex.repeat.set(1, 14);
+      return tex;
+    }
+
+    function makeBrickTexture(colorA, colorB) {
+      const c = document.createElement("canvas");
+      c.width = 256; c.height = 256;
+      const ctx = c.getContext("2d");
+      ctx.fillStyle = colorB;
+      ctx.fillRect(0, 0, 256, 256);
+      const rows = 8, cols = 4;
+      const bh = 256 / rows, bw = 256 / cols;
+      for (let r = 0; r < rows; r++) {
+        const offset = (r % 2) * (bw / 2);
+        for (let k = -1; k <= cols; k++) {
+          ctx.fillStyle = colorA;
+          ctx.fillRect(k * bw + offset + 2, r * bh + 2, bw - 4, bh - 4);
+        }
+      }
+      const tex = new THREE.CanvasTexture(c);
+      tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+      tex.repeat.set(2, 2);
+      return tex;
+    }
+
+    function makeR6FaceTexture(worried = false) {
+      const c = document.createElement("canvas");
+      c.width = 256; c.height = 256;
+      const ctx = c.getContext("2d");
+      ctx.fillStyle = "#f2c94c";
+      ctx.fillRect(0, 0, 256, 256);
+      ctx.fillStyle = "#111111";
+      // ดวงตาคลาสสิก Roblox
+      ctx.beginPath(); ctx.ellipse(92, 108, 11, 17, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(164, 108, 11, 17, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = "#111111";
+      ctx.lineWidth = 10;
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      if (worried) {
+        // สีหน้ากังวล/ตกใจเล็กน้อย
+        ctx.arc(128, 185, 28, Math.PI * 1.15, Math.PI * 1.85);
+      } else {
+        // ยิ้มคลาสสิก Roblox
+        ctx.arc(128, 142, 36, Math.PI * 0.15, Math.PI * 0.85);
+      }
+      ctx.stroke();
+      return new THREE.CanvasTexture(c);
+    }
+
+    const roadTex = makeRoadTexture();
+    const brickDarkTex = makeBrickTexture("#2a2f38", "#16191f");
+    const brickBrownTex = makeBrickTexture("#3a3028", "#1d1712");
+    const sidewalkTex = makeStudTexture("#262b33", "#303640");
+    sidewalkTex.repeat.set(2, 28);
+    const blueTorsoTex = makeStudTexture("#1f57a4", "#2768c2");
+    const greenLegTex = makeStudTexture("#2e7d32", "#38943c");
+    const yellowArmTex = makeStudTexture("#e6bc3c", "#f2c94c");
+
+    // -------------------------------------------------------------------------
+    // สร้างตัวละคร Roblox R6 แบบขยับข้อต่อได้จริง (หัว, ลำตัว, แขน 2, ขา 2)
+    // -------------------------------------------------------------------------
+    function createR6Character(options = {}) {
+      const isShadow = !!options.shadow;
+      const root = new THREE.Group();
+      const bodyPivot = new THREE.Group();
+      root.add(bodyPivot);
+
+      const shadowMat = new THREE.MeshStandardMaterial({
+        color: 0x050608,
+        roughness: 0.92,
+        metalness: 0.05,
+      });
+
+      const headMatPlain = isShadow
+        ? shadowMat
+        : new THREE.MeshStandardMaterial({ color: 0xf2c94c, roughness: 0.45 });
+      const headFaceMat = isShadow
+        ? shadowMat
+        : new THREE.MeshStandardMaterial({ map: makeR6FaceTexture(!!options.worried), roughness: 0.45 });
+      const torsoMat = isShadow
+        ? shadowMat
+        : new THREE.MeshStandardMaterial({ map: blueTorsoTex, roughness: 0.5 });
+      const armMat = isShadow
+        ? shadowMat
+        : new THREE.MeshStandardMaterial({ map: yellowArmTex, roughness: 0.48 });
+      const legMat = isShadow
+        ? shadowMat
+        : new THREE.MeshStandardMaterial({ map: greenLegTex, roughness: 0.5 });
+
+      // ลำตัว (Torso) สูง 2 หน่วย อยู่ที่ y = 3.0
+      const torso = new THREE.Mesh(new THREE.BoxGeometry(2.0, 2.0, 1.0), torsoMat);
+      torso.position.y = 3.0;
+      torso.castShadow = true;
+      torso.receiveShadow = true;
+      bodyPivot.add(torso);
+
+      // จุดหมุนคอ (Head Pivot)
+      const headPivot = new THREE.Group();
+      headPivot.position.set(0, 4.0, 0);
+      bodyPivot.add(headPivot);
+
+      const headMaterials = [
+        headMatPlain, headMatPlain, headMatPlain, headMatPlain, headFaceMat, headMatPlain
+      ];
+      const head = new THREE.Mesh(new THREE.BoxGeometry(1.22, 1.22, 1.22), headMaterials);
+      head.position.y = 0.62;
+      head.castShadow = true;
+      headPivot.add(head);
+
+      // ดวงตาเรืองแสงสำหรับตัวเงาดำ
+      let eyeMat = null;
+      let eyeLight = null;
+      if (isShadow) {
+        eyeMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.0 });
+        const eyeGeo = new THREE.SphereGeometry(0.11, 12, 12);
+        const eyeL = new THREE.Mesh(eyeGeo, eyeMat);
+        const eyeR = new THREE.Mesh(eyeGeo, eyeMat);
+        eyeL.position.set(-0.24, 0.68, 0.61);
+        eyeR.position.set(0.24, 0.68, 0.61);
+        headPivot.add(eyeL, eyeR);
+
+        eyeLight = new THREE.PointLight(0xdceeff, 0.0, 5.5);
+        eyeLight.position.set(0, 0.68, 0.9);
+        headPivot.add(eyeLight);
+      }
+
+      // แขนซ้าย-ขวา (หมุนจากหัวไหล่)
+      const leftArmPivot = new THREE.Group();
+      leftArmPivot.position.set(-1.52, 3.85, 0);
+      const leftArm = new THREE.Mesh(new THREE.BoxGeometry(0.96, 2.0, 0.96), armMat);
+      leftArm.position.y = -0.85;
+      leftArm.castShadow = true;
+      leftArmPivot.add(leftArm);
+      bodyPivot.add(leftArmPivot);
+
+      const rightArmPivot = new THREE.Group();
+      rightArmPivot.position.set(1.52, 3.85, 0);
+      const rightArm = new THREE.Mesh(new THREE.BoxGeometry(0.96, 2.0, 0.96), armMat);
+      rightArm.position.y = -0.85;
+      rightArm.castShadow = true;
+      rightArmPivot.add(rightArm);
+      bodyPivot.add(rightArmPivot);
+
+      // ขาซ้าย-ขวา (หมุนจากสะโพก)
+      const leftLegPivot = new THREE.Group();
+      leftLegPivot.position.set(-0.5, 2.0, 0);
+      const leftLeg = new THREE.Mesh(new THREE.BoxGeometry(0.96, 2.0, 0.96), legMat);
+      leftLeg.position.y = -1.0;
+      leftLeg.castShadow = true;
+      leftLegPivot.add(leftLeg);
+      bodyPivot.add(leftLegPivot);
+
+      const rightLegPivot = new THREE.Group();
+      rightLegPivot.position.set(0.5, 2.0, 0);
+      const rightLeg = new THREE.Mesh(new THREE.BoxGeometry(0.96, 2.0, 0.96), legMat);
+      rightLeg.position.y = -1.0;
+      rightLeg.castShadow = true;
+      rightLegPivot.add(rightLeg);
+      bodyPivot.add(rightLegPivot);
+
+      return {
+        root, bodyPivot, headPivot,
+        leftArmPivot, rightArmPivot,
+        leftLegPivot, rightLegPivot,
+        eyeMat, eyeLight
+      };
+    }
+
+    function animateR6Walk(ch, phase, amp = 0.55) {
+      const s = Math.sin(phase);
+      ch.leftLegPivot.rotation.x = s * amp;
+      ch.rightLegPivot.rotation.x = -s * amp;
+      ch.leftArmPivot.rotation.x = -s * amp * 0.85;
+      ch.rightArmPivot.rotation.x = s * amp * 0.85;
+      ch.bodyPivot.position.y = Math.abs(Math.cos(phase)) * 0.12;
+    }
+
+    function resetR6Pose(ch) {
+      ch.leftLegPivot.rotation.set(0, 0, 0);
+      ch.rightLegPivot.rotation.set(0, 0, 0);
+      ch.leftArmPivot.rotation.set(0, 0, 0);
+      ch.rightArmPivot.rotation.set(0, 0, 0);
+      ch.headPivot.rotation.set(0, 0, 0);
+      ch.bodyPivot.position.set(0, 0, 0);
+    }
+
+    // -------------------------------------------------------------------------
+    // สร้างฉากที่ 1: เมืองร้าง Roblox ยามตี 3 (ใช้ในฉาก 1 - 5)
+    // -------------------------------------------------------------------------
+    const streetScene = new THREE.Scene();
+    streetScene.background = new THREE.Color(0x0b121c);
+    streetScene.fog = new THREE.FogExp2(0x0e1826, 0.026);
+
+    const streetAmbient = new THREE.AmbientLight(0x4b6480, 1.15);
+    streetScene.add(streetAmbient);
+
+    const moonLight = new THREE.DirectionalLight(0x8bb4e0, 1.1);
+    moonLight.position.set(14, 28, 12);
+    streetScene.add(moonLight);
+
+    // แสงหมอกสีฟ้าหม่นด้านหลังเงาดำ เพื่อให้เห็นโครงร่างเงาดำตัดกับหมอกชัดๆ
+    const shadowBacklight = new THREE.PointLight(0x5a8ab8, 45, 28, 1.3);
+    shadowBacklight.position.set(0, 5.5, -19.5);
+    streetScene.add(shadowBacklight);
+
+    // พื้นถนนและฟุตบาท
+    const road = new THREE.Mesh(
+      new THREE.PlaneGeometry(11, 140),
+      new THREE.MeshStandardMaterial({ map: roadTex, roughness: 0.62, metalness: 0.15 })
+    );
+    road.rotation.x = -Math.PI / 2;
+    road.receiveShadow = true;
+    streetScene.add(road);
+
+    for (const sx of [-7.5, 7.5]) {
+      const sw = new THREE.Mesh(
+        new THREE.BoxGeometry(4, 0.35, 140),
+        new THREE.MeshStandardMaterial({ map: sidewalkTex, roughness: 0.85 })
+      );
+      sw.position.set(sx, 0.17, 0);
+      sw.receiveShadow = true;
+      streetScene.add(sw);
+    }
+
+    // อาคารสไตล์ Classic Roblox เรียงสองฝั่งถนน
+    const buildingDefs = [
+      { x: -12.5, z: -6, w: 7, h: 11, d: 10, tex: brickDarkTex },
+      { x: 12.5, z: -8, w: 7, h: 13, d: 11, tex: brickBrownTex },
+      { x: -12.5, z: -20, w: 7, h: 14, d: 12, tex: brickBrownTex },
+      { x: 12.5, z: -22, w: 7, h: 10, d: 10, tex: brickDarkTex },
+      { x: -12.5, z: -35, w: 7, h: 12, d: 12, tex: brickDarkTex },
+      { x: 12.5, z: -36, w: 7, h: 15, d: 12, tex: brickBrownTex },
+      { x: -12.5, z: 10, w: 7, h: 12, d: 10, tex: brickDarkTex },
+      { x: 12.5, z: 10, w: 7, h: 11, d: 10, tex: brickBrownTex },
+    ];
+    const darkWinMat = new THREE.MeshStandardMaterial({ color: 0x090c10, roughness: 0.25, metalness: 0.4 });
+    const dimWinMat = new THREE.MeshBasicMaterial({ color: 0x5c4c28 });
+
+    buildingDefs.forEach((b, idx) => {
+      const mesh = new THREE.Mesh(
+        new THREE.BoxGeometry(b.w, b.h, b.d),
+        new THREE.MeshStandardMaterial({ map: b.tex, roughness: 0.9 })
+      );
+      mesh.position.set(b.x, b.h / 2, b.z);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      streetScene.add(mesh);
+
+      // หน้าต่างบนตึก
+      const faceX = b.x < 0 ? b.x + b.w / 2 + 0.05 : b.x - b.w / 2 - 0.05;
+      for (let wy = 3.2; wy < b.h - 2; wy += 3.2) {
+        for (let wz = -b.d / 2 + 2.5; wz <= b.d / 2 - 2.5; wz += 3.5) {
+          const isLit = (idx === 0 && wy === 3.2 && wz < 0);
+          const win = new THREE.Mesh(new THREE.BoxGeometry(0.1, 1.8, 1.5), isLit ? dimWinMat : darkWinMat);
+          win.position.set(faceX, wy, b.z + wz);
+          streetScene.add(win);
+        }
+      }
+    });
+
+    // บ้านหลังหลอนกลางถนนด้านหลัง (ฉาก 1)
+    const backHouse = new THREE.Group();
+    const houseBody = new THREE.Mesh(
+      new THREE.BoxGeometry(10, 8.5, 8),
+      new THREE.MeshStandardMaterial({ map: brickBrownTex, roughness: 0.92 })
+    );
+    houseBody.position.y = 4.25;
+    backHouse.add(houseBody);
+    const houseRoof = new THREE.Mesh(
+      new THREE.ConeGeometry(7.8, 4.5, 4),
+      new THREE.MeshStandardMaterial({ color: 0x16181c, roughness: 0.95 })
+    );
+    houseRoof.rotation.y = Math.PI / 4;
+    houseRoof.position.y = 10.6;
+    backHouse.add(houseRoof);
+    backHouse.position.set(0, 0, -48);
+    streetScene.add(backHouse);
+
+    // เสาไฟถนนพร้อมแสงไฟที่กระพริบได้
+    const lamps = [];
+    function addStreetLamp(x, z) {
+      const g = new THREE.Group();
+      const poleMat = new THREE.MeshStandardMaterial({ color: 0x1e2229, roughness: 0.6, metalness: 0.5 });
+      const pole = new THREE.Mesh(new THREE.BoxGeometry(0.35, 9.2, 0.35), poleMat);
+      pole.position.y = 4.6;
+      g.add(pole);
+
+      const dir = x < 0 ? 1 : -1;
+      const arm = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.25, 0.25), poleMat);
+      arm.position.set(dir * 1.1, 9.1, 0);
+      g.add(arm);
+
+      const bulbMat = new THREE.MeshBasicMaterial({ color: 0xffd27d });
+      const bulb = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.4, 0.55), bulbMat);
+      bulb.position.set(dir * 2.1, 8.85, 0);
+      g.add(bulb);
+
+      const light = new THREE.PointLight(0xffb85c, 28, 22, 1.5);
+      light.position.set(dir * 2.1, 8.3, 0);
+      light.castShadow = true;
+      g.add(light);
+
+      g.position.set(x, 0, z);
+      streetScene.add(g);
+      lamps.push({ light, bulbMat });
+    }
+
+    addStreetLamp(-5.8, 2);
+    addStreetLamp(5.8, -14);
+    addStreetLamp(-5.8, -28);
+
+    // ละอองหมอกลอยช้าๆ เพิ่มบรรยากาศหลอน
+    const mistCount = 160;
+    const mistGeo = new THREE.BufferGeometry();
+    const mistPos = new Float32Array(mistCount * 3);
+    for (let i = 0; i < mistCount; i++) {
+      mistPos[i * 3] = ((i * 37) % 24) - 12;
+      mistPos[i * 3 + 1] = ((i * 19) % 10) + 0.5;
+      mistPos[i * 3 + 2] = -((i * 53) % 52) + 10;
+    }
+    mistGeo.setAttribute("position", new THREE.BufferAttribute(mistPos, 3));
+    const mistPoints = new THREE.Points(
+      mistGeo,
+      new THREE.PointsMaterial({ color: 0x8aa3ba, size: 0.22, transparent: true, opacity: 0.28 })
+    );
+    streetScene.add(mistPoints);
+
+    // ตัวละครในฉากถนน
+    const playerStreet = createR6Character({ shadow: false, worried: true });
+    const shadowStreet = createR6Character({ shadow: true });
+    streetScene.add(playerStreet.root, shadowStreet.root);
+
+    // -------------------------------------------------------------------------
+    // สร้างฉากที่ 2: ห้องนอนมืดตอนตี 3 (ใช้ในฉาก 6 หักมุม)
+    // -------------------------------------------------------------------------
+    const roomScene = new THREE.Scene();
+    roomScene.background = new THREE.Color(0x090e16);
+    roomScene.fog = new THREE.FogExp2(0x090e16, 0.032);
+
+    roomScene.add(new THREE.AmbientLight(0x3a4d66, 1.15));
+    const roomRim = new THREE.DirectionalLight(0x6e8fb5, 0.9);
+    roomRim.position.set(-6, 9, 6);
+    roomScene.add(roomRim);
+
+    const floor = new THREE.Mesh(
+      new THREE.PlaneGeometry(18, 18),
+      new THREE.MeshStandardMaterial({ color: 0x221d18, roughness: 0.9 })
+    );
+    floor.rotation.x = -Math.PI / 2;
+    roomScene.add(floor);
+
+    const wallMat = new THREE.MeshStandardMaterial({ color: 0x232b38, roughness: 0.92 });
+    const backWall = new THREE.Mesh(new THREE.BoxGeometry(18, 11, 0.4), wallMat);
+    backWall.position.set(0, 5.5, -5.5);
+    const rightWall = new THREE.Mesh(new THREE.BoxGeometry(0.4, 11, 18), wallMat);
+    rightWall.position.set(6.5, 5.5, 0);
+    roomScene.add(backWall, rightWall);
+
+    // เตียงนอนมุมห้อง
+    const bedFrame = new THREE.Mesh(
+      new THREE.BoxGeometry(4.5, 1.3, 6.2),
+      new THREE.MeshStandardMaterial({ color: 0x3b2d23, roughness: 0.85 })
+    );
+    bedFrame.position.set(-4.0, 0.65, -2.0);
+    const mattress = new THREE.Mesh(
+      new THREE.BoxGeometry(4.2, 0.65, 5.9),
+      new THREE.MeshStandardMaterial({ color: 0x364a63, roughness: 0.9 })
+    );
+    mattress.position.set(-4.0, 1.5, -2.0);
+    roomScene.add(bedFrame, mattress);
+
+    // โต๊ะคอม + จอมอนิเตอร์เรืองแสง
+    const woodMat = new THREE.MeshStandardMaterial({ color: 0x4c3726, roughness: 0.8 });
+    const deskTop = new THREE.Mesh(new THREE.BoxGeometry(5.6, 0.25, 2.5), woodMat);
+    deskTop.position.set(0.4, 2.45, -3.6);
+    roomScene.add(deskTop);
+
+    // หน้าจอคอมแสดงภาพเกมมืดๆ
+    const monFrame = new THREE.Mesh(
+      new THREE.BoxGeometry(2.9, 1.85, 0.16),
+      new THREE.MeshStandardMaterial({ color: 0x161920, roughness: 0.4 })
+    );
+    monFrame.position.set(0.0, 3.85, -4.1);
+    roomScene.add(monFrame);
+
+    const screenMat = new THREE.MeshBasicMaterial({ color: 0x7ba4d0 });
+    const monScreen = new THREE.Mesh(new THREE.PlaneGeometry(2.65, 1.6), screenMat);
+    monScreen.position.set(0.0, 3.85, -4.01);
+    roomScene.add(monScreen);
+
+    const screenLight = new THREE.PointLight(0x88b8ec, 22, 18, 1.3);
+    screenLight.position.set(0.0, 3.9, -2.8);
+    roomScene.add(screenLight);
+
+    // เก้าอี้ไม้
+    const chairSeat = new THREE.Mesh(new THREE.BoxGeometry(2.1, 0.22, 2.1), woodMat);
+    chairSeat.position.set(0.0, 1.45, -1.5);
+    const chairBack = new THREE.Mesh(new THREE.BoxGeometry(2.1, 2.1, 0.2), woodMat);
+    chairBack.position.set(0.0, 2.5, -0.5);
+    roomScene.add(chairSeat, chairBack);
+
+    // ตัวเอกนั่งเล่นคอม
+    const playerRoom = createR6Character({ shadow: false, worried: true });
+    playerRoom.root.position.set(0.0, 0.25, -1.6);
+    playerRoom.root.rotation.y = Math.PI; // หันหน้าเข้าจอคอม
+    playerRoom.leftLegPivot.rotation.x = -Math.PI / 2.2;
+    playerRoom.rightLegPivot.rotation.x = -Math.PI / 2.2;
+    playerRoom.leftArmPivot.rotation.x = -Math.PI / 2.6;
+    playerRoom.rightArmPivot.rotation.x = -Math.PI / 2.6;
+    roomScene.add(playerRoom.root);
+
+    // เงาดำยืนซ้อนอยู่หลังเก้าอี้ (ขยับเข้าใกล้ขึ้นเรื่อยๆ)
+    const shadowRoom = createR6Character({ shadow: true });
+    shadowRoom.root.scale.set(1.18, 1.18, 1.18);
+    roomScene.add(shadowRoom.root);
+
+    // -------------------------------------------------------------------------
+    // กล้องหลัก (ใช้ FOV 64 องศาเพื่อให้มุมมองแนวตั้ง 9:16 กว้างและจัดเฟรมสวย)
+    // -------------------------------------------------------------------------
+    const camera = new THREE.PerspectiveCamera(64, window.innerWidth / window.innerHeight, 0.1, 160);
+    let timeline = null;
+
+    window.setTimeline = function(data) {
+      timeline = data;
+    };
+
+    function clamp01(v) { return Math.max(0, Math.min(1, v)); }
+    function smoothstep(v) { const x = clamp01(v); return x * x * (3 - 2 * x); }
+
+    // ฟังก์ชันเรนเดอร์ 1 เฟรมที่เวลา t (วินาที)
+    window.renderAt = function(t) {
+      if (!timeline) return;
+
+      // หาว่าเวลา t อยู่ในฉากไหน
+      let cur = timeline.scenes[timeline.scenes.length - 1];
+      for (const s of timeline.scenes) {
+        if (t >= s.start && t < s.end) {
+          cur = s;
+          break;
+        }
+      }
+      const localT = Math.max(0, t - cur.start);
+      const dur = Math.max(0.001, cur.end - cur.start);
+      const p = clamp01(localT / dur);
+
+      // รีเซ็ต UI Overlay ก่อน
+      chatEl.style.display = "none";
+      leaveEl.style.display = "none";
+      badgeEl.style.display = "none";
+      blackoutEl.style.opacity = "0";
+
+      // ขยับหมอกลอยช้าๆ
+      mistPoints.position.y = Math.sin(t * 0.45) * 0.35;
+      mistPoints.position.x = Math.cos(t * 0.25) * 0.45;
+
+      // ไฟถนนกระพริบแบบสมจริง
+      lamps.forEach((lm, idx) => {
+        const flick = Math.sin(t * (7.5 + idx * 3.1)) * Math.sin(t * 23.0 + idx);
+        const dim = flick > 0.78 ? 0.35 : 1.0;
+        lm.light.intensity = 38 * dim;
+      });
+
+      const swayX = Math.sin(t * 1.4) * 0.08;
+      const swayY = Math.cos(t * 1.9) * 0.05;
+
+      if (cur.scene_type === "fog_alone") {
+        badgeEl.style.display = "block";
+        playerStreet.root.visible = true;
+        shadowStreet.root.visible = false;
+        resetR6Pose(playerStreet);
+
+        playerStreet.root.position.set(0, 0, -4);
+        playerStreet.root.rotation.y = 0;
+        // หันมองซ้าย-ขวาอย่างระแวง
+        playerStreet.headPivot.rotation.y = Math.sin(localT * 1.2) * 0.38;
+        playerStreet.leftArmPivot.rotation.z = 0.06;
+        playerStreet.rightArmPivot.rotation.z = -0.06;
+
+        camera.position.set(swayX, 3.8 + swayY, 9.5 - p * 3.0);
+        camera.lookAt(0, 3.0, -4);
+        renderer.render(streetScene, camera);
+
+      } else if (cur.scene_type === "abandoned_town") {
+        badgeEl.style.display = "block";
+        playerStreet.root.visible = false;
+        shadowStreet.root.visible = false;
+
+        // กล้องลอยผ่านเมืองร้างที่ว่างเปล่า
+        camera.position.set(Math.sin(p * Math.PI) * 1.1 + swayX, 4.6 + swayY, 6.0 - p * 16.0);
+        camera.lookAt(0, 3.2, -28.0);
+        renderer.render(streetScene, camera);
+
+      } else if (cur.scene_type === "walk_to_shadow") {
+        playerStreet.root.visible = true;
+        shadowStreet.root.visible = true;
+        resetR6Pose(playerStreet);
+        resetR6Pose(shadowStreet);
+
+        // ตัวเอกเดินเข้าไปหาเงาดำกลางถนน (จัดกล้องด้านข้างเยื้องหลังให้เห็นทั้งคู่ชัดๆ)
+        const walkZ = 2.0 - p * 6.5;
+        playerStreet.root.position.set(-1.7, 0, walkZ);
+        playerStreet.root.rotation.y = Math.PI;
+        animateR6Walk(playerStreet, localT * 5.2, 0.5);
+
+        // เงาดำยืนหันหลังนิ่งสนิทอยู่กลางถนนหน้าแสงหมอก
+        shadowStreet.root.position.set(0.8, 0, -14.5);
+        shadowStreet.root.rotation.y = Math.PI;
+        shadowStreet.eyeMat.opacity = 0.0;
+        shadowStreet.eyeLight.intensity = 0.0;
+
+        camera.position.set(1.6 + swayX, 4.8 + swayY, walkZ + 8.5);
+        camera.lookAt(-0.2, 2.8, -11.5);
+        renderer.render(streetScene, camera);
+
+      } else if (cur.scene_type === "chat_warning") {
+        playerStreet.root.visible = false;
+        shadowStreet.root.visible = true;
+        resetR6Pose(shadowStreet);
+
+        shadowStreet.root.position.set(0, 0, -14.5);
+        shadowStreet.root.rotation.y = Math.PI;
+        shadowStreet.eyeMat.opacity = 0.0;
+        shadowStreet.eyeLight.intensity = 0.0;
+
+        // กล้องค่อยๆ ซูมเข้าไปหาเงาดำที่ยืนตัดกับแสงหมอกสีฟ้า
+        camera.position.set(swayX * 0.7, 3.6 + swayY * 0.5, -3.5 - p * 3.5);
+        camera.lookAt(0, 3.2, -14.5);
+
+        // แสดงกล่องแชท Roblox เด้งทีละข้อความตามจังหวะเล่า
+        chatEl.style.display = "block";
+        let html = "";
+        if (p >= 0.08) {
+          html += `<div class="chat-line"><span class="chat-user">[You]:</span> หวัดดี</div>`;
+        }
+        if (p >= 0.58) {
+          html += `<div class="chat-line"><span class="chat-entity">[???]:</span> <span class="chat-danger">อย่าหันหลังกลับไปนะ...</span></div>`;
+        }
+        chatEl.innerHTML = html;
+        renderer.render(streetScene, camera);
+
+      } else if (cur.scene_type === "head_turn") {
+        playerStreet.root.visible = false;
+        shadowStreet.root.visible = true;
+        resetR6Pose(shadowStreet);
+
+        shadowStreet.root.position.set(0, 0, -14.5);
+        shadowStreet.root.rotation.y = Math.PI;
+
+        // ช่วงแรกโชว์ปุ่ม Leave ที่กดไม่ได้ + สั่นเตือน
+        if (p < 0.62) {
+          leaveEl.style.display = "block";
+          if (p > 0.25) {
+            const shake = Math.sin(localT * 45) * 6;
+            leaveBtnEl.style.transform = `translateX(${shake}px)`;
+            leaveErrEl.textContent = "ERROR: CANNOT LEAVE THIS SERVER";
+          } else {
+            leaveBtnEl.style.transform = "none";
+            leaveErrEl.textContent = "";
+          }
+        }
+
+        // เงาดำค่อยๆ หันหัว 180 องศามามองกล้อง + เอียงคอหลอน + ตาขาวเรืองแสง
+        const turnP = smoothstep((p - 0.32) / 0.52);
+        shadowStreet.headPivot.rotation.y = turnP * Math.PI;
+        shadowStreet.headPivot.rotation.z = Math.sin(turnP * Math.PI * 0.6) * 0.22;
+
+        const eyeGlow = smoothstep((p - 0.52) / 0.25);
+        shadowStreet.eyeMat.opacity = eyeGlow;
+        shadowStreet.eyeLight.intensity = eyeGlow * 3.5;
+
+        // กล้องซูมใกล้เห็นหัวและไหล่ตัวเงาดำชัดๆ
+        const shakeCam = p > 0.6 ? Math.sin(localT * 32) * 0.04 : 0;
+        camera.position.set(shakeCam + swayX * 0.4, 4.2 + swayY * 0.4, -7.8 - p * 2.2);
+        camera.lookAt(0, 4.1, -14.5);
+        renderer.render(streetScene, camera);
+
+      } else if (cur.scene_type === "bedroom_twist") {
+        // ตัวเอกขยับมือพิมพ์คีย์บอร์ด
+        const typing = Math.sin(localT * 18) * 0.08;
+        playerRoom.leftArmPivot.rotation.x = -Math.PI / 2.6 + typing;
+        playerRoom.rightArmPivot.rotation.x = -Math.PI / 2.6 - typing;
+        playerRoom.headPivot.rotation.y = Math.sin(localT * 1.5) * 0.08;
+
+        // เงาดำค่อยๆ ก้าวเข้ามาชิดหลังเก้าอี้ด้านขวา + ตาสีขาวจ้องลงมา
+        const creep = smoothstep(p / 0.65);
+        shadowRoom.root.position.set(2.4 - creep * 0.6, 0, 0.2 - creep * 0.8);
+        shadowRoom.root.rotation.y = -0.65;
+        shadowRoom.headPivot.rotation.x = 0.22;
+        shadowRoom.headPivot.rotation.z = -0.14;
+        shadowRoom.eyeMat.opacity = 0.45 + creep * 0.55;
+        shadowRoom.eyeLight.intensity = 1.5 + creep * 3.0;
+
+        // หน้าจอคอมกะพริบแล้วดับตอนเฉลยหักมุม
+        const boomAt = timeline.boom_time || (cur.start + dur * 0.62);
+        if (t >= boomAt - 0.15) {
+          chatEl.style.display = "block";
+          chatEl.innerHTML = `<div class="chat-line"><span class="chat-entity">[???]:</span> <span class="chat-danger">กูไม่ได้หมายถึงในเกม...</span></div>`;
+        }
+
+        if (t >= boomAt + 0.85) {
+          screenLight.intensity = 0.2;
+          screenMat.color.setHex(0x050608);
+          const fadeOut = clamp01((t - (boomAt + 0.85)) / 0.7);
+          blackoutEl.style.opacity = String(fadeOut);
+        } else {
+          screenLight.intensity = 22 + Math.sin(localT * 28) * 2.0;
+          screenMat.color.setHex(0x7ba4d0);
+        }
+
+        // มุมกล้องมุมกว้างจากด้านซ้ายหลัง เห็นทั้งจอคอม ตัวเอกนั่งเล่น และเงาดำยืนซ้อนด้านขวาหลัง!
+        camera.position.set(-4.2 + p * 0.6 + swayX * 0.5, 5.4 - p * 0.3, 4.4 - p * 0.9);
+        camera.lookAt(0.6, 3.3, -1.8);
+        renderer.render(roomScene, camera);
+      }
+    };
+  </script>
+</body>
+</html>

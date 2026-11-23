@@ -238,10 +238,11 @@ async def build_episode(episode_dir: Path) -> Path:
     height = int(story.get("height", 1920))
     fps = int(story.get("fps", 30))
 
-    print("1/5 กำลังสร้างเสียงพากย์ภาษาไทยทีละท่อน...")
+    print("1/5 กำลังสร้างเสียงพากย์ภาษาไทยทีละท่อน...", flush=True)
     concat_audio_inputs: list[Path] = []
     subtitles: list[dict] = []
     scene_durations: list[tuple[dict, float]] = []
+    timeline_scenes: list[dict] = []
     current_time = 0.0
     boom_time: float | None = None
 
@@ -255,12 +256,13 @@ async def build_episode(episode_dir: Path) -> Path:
     current_time += 0.25
 
     for s_idx, scene in enumerate(story["scenes"], start=1):
-        scene_start = current_time
+        scene_start = 0.0 if s_idx == 1 else current_time
         lines = scene["lines"]
         for l_idx, line in enumerate(lines, start=1):
             mp3_path = audio_dir / f"{scene['id']}_line_{l_idx:02d}.mp3"
             wav_path = tmp_dir / f"{scene['id']}_line_{l_idx:02d}.wav"
-            await generate_tts_line(line["text"], mp3_path, voice, rate, pitch)
+            speak_text = line.get("tts_text", line["text"])
+            await generate_tts_line(speak_text, mp3_path, voice, rate, pitch)
 
             # แปลงเป็น WAV 44.1kHz mono เพื่อรวมไฟล์ได้เนียนไม่เพี้ยนเวลา
             run_cmd([
@@ -293,16 +295,19 @@ async def build_episode(episode_dir: Path) -> Path:
                 current_time += pause
 
         scene_dur = current_time - scene_start
-        # ฉากแรกบวกเวลา intro 0.25 วิเข้าไปด้วยเพื่อให้ภาพเริ่มตั้งแต่ 0.00
-        if s_idx == 1:
-            scene_dur += 0.25
         scene_durations.append((scene, scene_dur))
+        timeline_scenes.append({
+            "id": scene["id"],
+            "scene_type": scene.get("scene_type", "fog_alone"),
+            "start": scene_start,
+            "end": current_time,
+        })
 
     total_duration = current_time
-    print(f"   ความยาวคลิปรวม: {total_duration:.2f} วินาที")
+    print(f"   ความยาวคลิปรวม: {total_duration:.2f} วินาที", flush=True)
 
     # รวมเสียงพากย์ทั้งหมดเป็นไฟล์เดียว
-    print("2/5 กำลังรวมเสียงพากย์และสังเคราะห์ซาวด์บรรยากาศหลอน...")
+    print("2/5 กำลังรวมเสียงพากย์และสังเคราะห์ซาวด์บรรยากาศหลอน...", flush=True)
     audio_list_txt = tmp_dir / "audio_list.txt"
     audio_list_txt.write_text(
         "\n".join(f"file '{p.resolve()}'" for p in concat_audio_inputs) + "\n",
@@ -318,15 +323,17 @@ async def build_episode(episode_dir: Path) -> Path:
     ambient_wav = audio_dir / "horror_ambient.wav"
     generate_horror_ambient(total_duration, boom_time, ambient_wav)
 
-    # มิกซ์เสียงพากย์ + เสียงบรรยากาศหลอน
+    # มิกซ์เสียงพากย์ (ปรับ EQ โทนไมค์เล่าเรื่องให้อุ่นและลดเสียงแข็งแบบ AI) + เสียงบรรยากาศหลอน
     final_audio_m4a = audio_dir / "final_mix.m4a"
     run_cmd([
         "ffmpeg", "-y",
         "-i", str(voiceover_wav),
         "-i", str(ambient_wav),
         "-filter_complex",
-        "[0:a]volume=1.15,acompressor=threshold=-16dB:ratio=3:attack=5:release=60[v];"
-        "[1:a]volume=0.22[bg];"
+        "[0:a]highpass=f=85,equalizer=f=180:width_type=o:width=1.2:g=3.0,"
+        "equalizer=f=3200:width_type=o:width=1.4:g=-2.2,lowpass=f=8200,"
+        "volume=1.22,acompressor=threshold=-16dB:ratio=2.8:attack=5:release=60[v];"
+        "[1:a]volume=0.20[bg];"
         "[v][bg]amix=inputs=2:duration=first:dropout_transition=2,alimiter=limit=0.95[out]",
         "-map", "[out]",
         "-c:a", "aac", "-b:a", "192k",
@@ -334,36 +341,57 @@ async def build_episode(episode_dir: Path) -> Path:
     ])
 
     # สร้างไฟล์ซับไตเติล ASS
-    print("3/5 กำลังสร้างซับไตเติลสไตล์ TikTok...")
+    print("3/5 กำลังสร้างซับไตเติลสไตล์ TikTok...", flush=True)
     ass_path = tmp_dir / "subtitles.ass"
     build_ass_file(subtitles, ass_path, width, height)
 
-    # เรนเดอร์วิดีโอแต่ละฉาก
-    print("4/5 กำลังเรนเดอร์ภาพเคลื่อนไหวทั้ง 6 ฉาก...")
-    scene_clips: list[Path] = []
-    for scene, dur in scene_durations:
-        img_path = episode_dir / scene["image"]
-        clip_path = tmp_dir / f"{scene['id']}.mp4"
-        render_scene_clip(img_path, dur, scene.get("motion", "zoom_in"), width, height, fps, clip_path)
-        scene_clips.append(clip_path)
-
-    # ต่อฉากทั้งหมด + ใส่เฟดดำตอนจบ + ฝังซับไตเติล + รวมเสียง
-    print("5/5 กำลังประกอบคลิปสุดท้าย...")
-    video_list_txt = tmp_dir / "video_list.txt"
-    video_list_txt.write_text(
-        "\n".join(f"file '{p.resolve()}'" for p in scene_clips) + "\n",
-        encoding="utf-8",
-    )
     raw_video = tmp_dir / "raw_concat.mp4"
-    run_cmd([
-        "ffmpeg", "-y", "-f", "concat", "-safe", "0",
-        "-i", str(video_list_txt),
-        "-c", "copy", str(raw_video),
-    ])
+    mode = story.get("mode", "images")
 
+    if mode == "3d":
+        # เรนเดอร์แอนิเมชัน 3D Roblox R6 ด้วย Three.js + Playwright
+        print("4/5 กำลังเรนเดอร์แอนิเมชัน 3D Roblox R6...", flush=True)
+        timeline_path = tmp_dir / "timeline.json"
+        timeline_path.write_text(
+            json.dumps({
+                "duration": total_duration,
+                "boom_time": boom_time,
+                "scenes": timeline_scenes,
+            }, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        script_dir = Path(__file__).resolve().parent
+        scene_html = script_dir / "r6_3d_scene.html"
+        render_script = script_dir / "render_3d.py"
+        subprocess.run(
+            [sys.executable, str(render_script), str(scene_html), str(timeline_path), str(raw_video)],
+            check=True,
+        )
+    else:
+        # โหมดภาพนิ่งเคลื่อนไหว (Ken Burns)
+        print("4/5 กำลังเรนเดอร์ภาพเคลื่อนไหวทั้ง 6 ฉาก...", flush=True)
+        scene_clips: list[Path] = []
+        for scene, dur in scene_durations:
+            img_path = episode_dir / scene["image"]
+            clip_path = tmp_dir / f"{scene['id']}.mp4"
+            render_scene_clip(img_path, dur, scene.get("motion", "zoom_in"), width, height, fps, clip_path)
+            scene_clips.append(clip_path)
+
+        video_list_txt = tmp_dir / "video_list.txt"
+        video_list_txt.write_text(
+            "\n".join(f"file '{p.resolve()}'" for p in scene_clips) + "\n",
+            encoding="utf-8",
+        )
+        run_cmd([
+            "ffmpeg", "-y", "-f", "concat", "-safe", "0",
+            "-i", str(video_list_txt),
+            "-c", "copy", str(raw_video),
+        ])
+
+    # ฝังซับไตเติล + เฟดเข้า/ออก + รวมเสียง
+    print("5/5 กำลังประกอบคลิปสุดท้าย...", flush=True)
     out_mp4 = out_dir / f"{episode_dir.name}.mp4"
     fade_out_start = max(0.0, total_duration - 1.1)
-    # หนีอักขระพิเศษใน path สำหรับตัวกรอง ass ของ ffmpeg
     ass_escaped = str(ass_path.resolve()).replace("\\", "/").replace(":", r"\:")
     run_cmd([
         "ffmpeg", "-y",
@@ -372,14 +400,14 @@ async def build_episode(episode_dir: Path) -> Path:
         "-vf", f"ass='{ass_escaped}',fade=t=in:st=0:d=0.4,fade=t=out:st={fade_out_start:.2f}:d=1.0",
         "-map", "0:v:0",
         "-map", "1:a:0",
-        "-c:v", "libx264", "-preset", "medium", "-crf", "19",
+        "-c:v", "libx264", "-preset", "fast", "-crf", "19",
         "-c:a", "copy",
         "-movflags", "+faststart",
         "-shortest",
         str(out_mp4),
     ])
 
-    print(f"เสร็จสมบูรณ์! ไฟล์คลิปอยู่ที่: {out_mp4}")
+    print(f"เสร็จสมบูรณ์! ไฟล์คลิปอยู่ที่: {out_mp4}", flush=True)
     return out_mp4
 
 
