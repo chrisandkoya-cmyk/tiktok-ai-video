@@ -1,0 +1,113 @@
+{
+  "title": "อย่าเข้าเซิร์ฟเวอร์ที่มีผู้เล่นแค่ 1 คนตอนตี 3",
+  "voice": "th-TH-NiwatNeural",
+  "rate": "-8%",
+  "pitch": "-8Hz",
+  "fps": 30,
+  "width": 1080,
+  "height": 1920,
+  "scenes": [
+    {
+      "id": "scene_01",
+      "image": "assets/images/scene_01.jpg",
+      "motion": "zoom_in",
+      "lines": [
+        {
+          "text": "ถ้าคุณเห็นแมพ Roblox ที่มีผู้เล่นแค่ 1 คนตอนตี 3",
+          "pause_after": 0.35
+        },
+        {
+          "text": "อย่ากดเข้าไปเด็ดขาด...",
+          "pause_after": 0.55,
+          "style": "accent"
+        }
+      ]
+    },
+    {
+      "id": "scene_02",
+      "image": "assets/images/scene_02.jpg",
+      "motion": "pan_right",
+      "lines": [
+        {
+          "text": "คืนนั้นผมนอนไม่หลับ เลยลองเข้าแมพร้างเก่าๆ แมพหนึ่ง",
+          "pause_after": 0.3
+        },
+        {
+          "text": "ในเซิร์ฟเวอร์โชว์ว่ามีคนเล่นอยู่แค่คนเดียว",
+          "pause_after": 0.45
+        }
+      ]
+    },
+    {
+      "id": "scene_03",
+      "image": "assets/images/scene_03.jpg",
+      "motion": "zoom_in",
+      "lines": [
+        {
+          "text": "พอโหลดเข้าเกม แมพเงียบสนิท ไม่มีเสียงอะไรเลย",
+          "pause_after": 0.35
+        },
+        {
+          "text": "มีแค่ตัวละคร R6 สีดำสนิท ยืนหันหลังนิ่งๆ อยู่กลางถนน",
+          "pause_after": 0.5
+        }
+      ]
+    },
+    {
+      "id": "scene_04",
+      "image": "assets/images/scene_04.jpg",
+      "motion": "zoom_in_slow",
+      "lines": [
+        {
+          "text": "ผมลองพิมพ์ทักไปว่า หวัดดี แต่มันไม่ตอบ",
+          "pause_after": 0.4
+        },
+        {
+          "text": "สักพักกล่องแชทก็เด้งขึ้นมาว่า",
+          "pause_after": 0.3
+        },
+        {
+          "text": "อย่าหันหลังกลับไปนะ...",
+          "pause_after": 0.55,
+          "style": "accent"
+        }
+      ]
+    },
+    {
+      "id": "scene_05",
+      "image": "assets/images/scene_05.jpg",
+      "motion": "zoom_in_fast",
+      "lines": [
+        {
+          "text": "ผมคิดว่าโดนแกล้ง เลยจะกดออกจากเกม",
+          "pause_after": 0.25
+        },
+        {
+          "text": "แต่ปุ่ม Leave กดไม่ได้",
+          "pause_after": 0.35
+        },
+        {
+          "text": "แล้วตัวละครนั้นก็ค่อยๆ หันหน้ามาหาผม...",
+          "pause_after": 0.6
+        }
+      ]
+    },
+    {
+      "id": "scene_06",
+      "image": "assets/images/scene_06.jpg",
+      "motion": "zoom_in",
+      "boom_at_last_line": true,
+      "lines": [
+        {
+          "text": "ข้อความสุดท้ายเด้งขึ้นมาก่อนหน้าจอจะดับ",
+          "pause_after": 0.65
+        },
+        {
+          "text": "กูไม่ได้หมายถึงในเกม...",
+          "pause_after": 1.4,
+          "style": "horror"
+        }
+      ]
+    }
+  ]
+}

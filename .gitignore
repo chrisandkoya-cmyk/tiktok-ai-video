@@ -1,0 +1,5 @@
+# ไฟล์ชั่วคราวจากการเรนเดอร์
+episodes/*/tmp/
+__pycache__/
+*.pyc
+.DS_Store
